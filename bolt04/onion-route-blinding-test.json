@@ -32,7 +32,7 @@
             ]
         },
         "full_route": {
-            "comment": "The sender adds one normal hop before the blinded route. It provides the blinding point to the first node in the blinded route, and encrypted_data to each node in the blinded route.",
+            "comment": "The sender adds one normal hop through Alice, who doesn't support blinded payments. The sender provides the initial blinding point in Bob's onion payload, and encrypted_data for each node in the blinded route.",
             "hops": [
                 {
                     "alias": "Alice",
