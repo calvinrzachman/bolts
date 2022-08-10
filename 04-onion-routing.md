@@ -267,7 +267,7 @@ It is formatted according to the Type-Length-Value format defined in [BOLT #1](0
     1. type: 10 (`encrypted_recipient_data`)
     2. data:
         * [`...*byte`:`encrypted_data`]
-    1. type: 12 (`blinding_point`)
+    1. type: 12 (`current_blinding_point`)
     2. data:
         * [`point`:`blinding`]
     1. type: 16 (`payment_metadata`)
@@ -286,7 +286,7 @@ The writer:
   - For every node inside a blinded route:
     - MUST include the `encrypted_data` provided by the recipient
     - For the first node in the blinded route:
-      - MUST include the `blinding_point` provided by the recipient
+      - MUST include the `blinding_point` provided by the recipient in `current_blinding_point`
     - If it is the final node:
       - MUST include `amt_to_forward` and `outgoing_cltv_value`.
       - MUST include `total_amount_msat` when using `basic_mpp`.
@@ -308,32 +308,36 @@ The writer:
 
 The reader:
 
-  - If `blinding_point` is set (either in the payload or the outer message):
-    - MUST return an error if it is set in both the payload and the outer message
-    - MUST return an error if `encrypted_recipient_data` is not present.
-    - MUST return an error if the expiry is greater than `encrypted_recipient_data.payment_constraints.max_cltv_expiry`.
-    - MUST return an error if the amount is below `encrypted_recipient_data.payment_constraints.htlc_minimum_msat`.
-    - MUST return an error if the payment uses a feature not included in `encrypted_recipient_data.payment_constraints.allowed_features`.
+  - If `encrypted_recipient_data` is present:
+    - If `blinding_point` is set in the incoming `update_add_htlc`:
+      - MUST return an error if `current_blinding_point` is present.
+      - MUST use that `blinding_point` as the blinding point for decryption.
+    - Otherwise:
+      - MUST return an error if `current_blinding_point` is not present.
+      - MUST use that `current_blinding_point` as the blinding point for decrypion.
+      - SHOULD add a random delay before returning errors.
+    - MUST return an error if `encrypted_recipient_data` does not decrypt using the
+      blinding point as described in [Route Blinding](#route-blinding).
+    - If `payment_constraints` is present:
+      - MUST return an error if:
+        - the expiry is greater than `encrypted_recipient_data.payment_constraints.max_cltv_expiry`.
+        - the amount is below `encrypted_recipient_data.payment_constraints.htlc_minimum_msat`.
+        - the payment uses a feature not included in `encrypted_recipient_data.payment_constraints.allowed_features`.
     - If it not the final node:
-      - MUST return an error if the payload contains other tlv fields than `encrypted_recipient_data` and `blinding_point`.
-      - MUST return an error if `encrypted_recipient_data` does not contain `short_channel_id` or `next_node_id`.
+      - MUST return an error if the payload contains other tlv fields than `encrypted_recipient_data` and `current_blinding_point`.
+      - MUST return an error if `encrypted_recipient_data` does not contain either `short_channel_id` or `next_node_id`.
       - MUST return an error if `encrypted_recipient_data` does not contain `payment_relay`.
-      - If `encrypted_recipient_data.payment_relay` does not satisfy its current settings:
-        - MAY return an error.
-      - Otherwise:
-        - MUST use values from `encrypted_recipient_data.payment_relay` to calculate `amt_to_forward` and `outgoing_cltv_value` as follows:
-          - `amt_to_forward = (amount_msat - fee_base_msat) * 1000000 + 1000000 + fee_proportional_millionths - 1) / (1000000 + fee_proportional_millionths)`
-          - `outgoing_cltv_value = ctlv_expiry - payment_relay.cltv_expiry_delta`
-      - If it is the introduction point:
-        - SHOULD add a random delay before returning errors.
+      - MUST use values from `encrypted_recipient_data.payment_relay` to calculate `amt_to_forward` and `outgoing_cltv_value` as follows:
+        - `amt_to_forward = ((amount_msat - fee_base_msat) * 1000000 + 1000000 + fee_proportional_millionths - 1) / (1000000 + fee_proportional_millionths)`
+        - `outgoing_cltv_value = ctlv_expiry - payment_relay.cltv_expiry_delta`
     - If it is the final node:
-      - MUST return an error if the payload contains other tlv fields than `encrypted_recipient_data`, `blinding_point`, `amt_to_forward`, `outgoing_cltv_value` and `total_amount_msat`.
+      - MUST return an error if the payload contains other tlv fields than `encrypted_recipient_data`, `current_blinding_point`, `amt_to_forward`, `outgoing_cltv_value` and `total_amount_msat`.
       - MUST return an error if the `path_id` in `encrypted_recipient_data` does not match the one it created.
       - MUST return an error if `amt_to_forward` or `outgoing_cltv_value` are not present.
       - MUST return an error if `amt_to_forward` is below what it expects for the payment.
   - Otherwise (it is not part of a blinded route):
     - MUST return an error if `amt_to_forward` or `outgoing_cltv_value` are not present.
-    - MUST return an error if `encrypted_recipient_data` is present.
+    - MUST return an error if `blinding_point` is set in the incoming `update_add_htlc`.
   - If it is the final node:
     - MUST treat `total_msat` as if it were equal to `amt_to_forward` if it is not present.
 
@@ -341,8 +345,8 @@ The requirements for the contents of these fields are specified [above](#legacy-
 and [below](#basic-multi-part-payments).
 
 The requirements for the fields related to route blinding
-(`encrypted_recipient_data` and `blinding_point`) are also specified
-[below](#route-blinding).
+(`encrypted_recipient_data` and `current_blinding_point`) are also
+specified [below](#route-blinding).
 
 ### Basic Multi-Part Payments
 
@@ -434,15 +438,24 @@ Nodes receiving onion packets may hide their identity from senders by
 "blinding" an arbitrary amount of hops at the end of an onion path.
 
 When using route blinding, nodes find a route to themselves from a given
-"introduction node". They then use ECDH with each node in that route to create
-a "blinded" node ID and an encrypted blob (`encrypted_data`) for each one of
-the blinded nodes.
+"introduction node" and initial "blinding point". They then use ECDH with
+each node in that route to create a "blinded" node ID and an encrypted blob
+(`encrypted_data`) for each one of the blinded nodes.
 
 They communicate this blinded route and the encrypted blobs to the sender.
 The sender finds a route to the introduction node and extends it with the
 blinded route provided by the recipient. The sender includes the encrypted
 blobs in the corresponding onion payloads: they allow nodes in the blinded
 part of the route to "unblind" the next node and correctly forward the packet.
+
+Note that there are two ways for the sender to reach the introduction
+point: one is to create a normal (unblinded) payment, and place the
+initial blinding point in `current_blinding_point` along with the
+`encrypted_data` in the onion payload for the introduction point to
+start the blinded path. The second way is to create a blinded path to
+the introduction point, set `next_blinding_override` inside the
+`encrypted_data_tlv` on the hop prior to the introduction point to the
+initial blinding point, and have it sent to the introduction node.
 
 The `encrypted_data` is a TLV stream, encrypted for a given blinded node, that
 may contain the following TLV fields:

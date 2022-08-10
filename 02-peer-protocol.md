@@ -1162,7 +1162,7 @@ A receiving node:
       - MUST return an `update_fail_malformed_htlc` error using the
         `invalid_onion_blinding` failure code, with the `sha256_of_onion`
         of the onion it received.
-      - If it is the introduction point:
+      - If its onion payload contains `current_blinding_point`:
         - SHOULD add a random delay before sending `update_fail_malformed_htlc`.
     - otherwise:
       - MUST return an error in the `update_fail_htlc` sent to the link which

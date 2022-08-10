@@ -253,6 +253,11 @@ values for the complete route (iteratively starting from the end of the route):
 * `route_cltv_expiry_delta`: 288
 * NB: we need to round values up, otherwise the recipient will receive slightly less than expected
 
+More generally, aggregated fees can be computed recursively with the following formulas, replacing `ceil(a/b)` with `(a+b-1)/b`:
+
+* `route_fee_base_msat(n+1) = (fee_base_msat(n+1) * 1000000 + route_fee_base_msat(n) * (1000000 + fee_proportional_millionths(n+1)) + 1000000 - 1) / 1000000`
+* `route_fee_proportional_millionths(n+1) = ((route_fee_proportional_millionths(n) + fee_proportional_millionths(n+1)) * 1000000 + route_fee_proportional_millionths(n) * fee_proportional_millionths(n+1) + 1000000 - 1) / 1000000`
+
 Let's assume the current block height is 1000. Alice wants the route to be used in the next 200
 blocks, so she sets `max_cltv_expiry = 1200` and adds `cltv_expiry_delta` for each hop. Alice then
 transmits the following information to the sender (most likely via an invoice):
