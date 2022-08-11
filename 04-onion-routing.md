@@ -322,8 +322,10 @@ The reader:
       - MUST return an error if:
         - the expiry is greater than `encrypted_recipient_data.payment_constraints.max_cltv_expiry`.
         - the amount is below `encrypted_recipient_data.payment_constraints.htlc_minimum_msat`.
+        - `encrypted_recipient_data.payment_constraints.allowed_features` contains an unknown feature bit (even if it is odd).
         - the payment uses a feature not included in `encrypted_recipient_data.payment_constraints.allowed_features`.
     - If it not the final node:
+      - MUST return `invalid_onion_blinding` for any local error (and forward normal downstream onion errors, which the final node may send).
       - MUST return an error if the payload contains other tlv fields than `encrypted_recipient_data` and `current_blinding_point`.
       - MUST return an error if `encrypted_recipient_data` does not contain either `short_channel_id` or `next_node_id`.
       - MUST return an error if `encrypted_recipient_data` does not contain `payment_relay`.
@@ -337,7 +339,7 @@ The reader:
       - MUST return an error if `amt_to_forward` is below what it expects for the payment.
   - Otherwise (it is not part of a blinded route):
     - MUST return an error if `amt_to_forward` or `outgoing_cltv_value` are not present.
-    - MUST return an error if `blinding_point` is set in the incoming `update_add_htlc`.
+    - MUST return an `invalid_onion_blinding` error if `blinding_point` is set in the incoming `update_add_htlc`.
   - If it is the final node:
     - MUST treat `total_msat` as if it were equal to `amt_to_forward` if it is not present.
 
