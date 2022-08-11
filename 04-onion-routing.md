@@ -279,7 +279,17 @@ It is formatted according to the Type-Length-Value format defined in [BOLT #1](0
 
 ### Requirements
 
-The writer:
+When using route blinding, the final recipient (writer of `encrypted_recipient_data`):
+
+  - MUST create `encrypted_recipient_data` for each node in the blinded route (including itself).
+  - MUST include `encrypted_data_tlv.short_channel_id` and `encrypted_data_tlv.payment_relay` for each intermediate node.
+  - MUST NOT include `encrypted_data_tlv.path_id` for each intermediate node.
+  - MAY include `encrypted_data_tlv.payment_constraints` for each node (including itself).
+  - MUST compute the total fees and cltv delta of the route as follows and communicate them to the sender:
+    - `total_fee_base_msat(n+1) = (fee_base_msat(n+1) * 1000000 + total_fee_base_msat(n) * (1000000 + fee_proportional_millionths(n+1)) + 1000000 - 1) / 1000000`
+    - `total_fee_proportional_millionths(n+1) = ((total_fee_proportional_millionths(n) + fee_proportional_millionths(n+1)) * 1000000 + total_fee_proportional_millionths(n) * fee_proportional_millionths(n+1) + 1000000 - 1) / 1000000`
+
+The writer of `tlv_payload`:
 
   - Unless `node_announcement`, `init` message or the [BOLT #11](11-payment-encoding.md#tagged-fields) offers feature `var_onion_optin`:
     - MUST use the legacy payload format instead.
@@ -512,14 +522,6 @@ A recipient N(r) creating a blinded route `N(0) -> N(1) -> ... -> N(r)` to itsel
 - MUST communicate the blinded node IDs `B(i)` and `encrypted_data(i)` to the sender
 - MUST communicate the real node ID of the introduction point `N(0)` to the sender
 - MUST communicate the first blinding ephemeral key `E(0)` to the sender
-- If the blinded route will be used for payments:
-  - MUST set `short_channel_id` and `payment_relay` in the `encrypted_data` for intermediate nodes
-  - MUST NOT set `path_id` in the `encrypted_data` for intermediate nodes
-  - MUST compute the total fees and cltv delta of the route and communicate them to the sender
-- If the blinded route will be used for messages:
-  - MUST set `next_node_id` in the `encrypted_data` for intermediate nodes
-  - MUST NOT set `payment_relay` or `payment_constraints` in the `encrypted_data` payloads
-  - MUST NOT set `path_id` in the `encrypted_data` for intermediate nodes
 
 The sender:
 
