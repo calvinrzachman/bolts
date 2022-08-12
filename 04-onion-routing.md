@@ -526,33 +526,19 @@ A recipient N(r) creating a blinded route `N(0) -> N(1) -> ... -> N(r)` to itsel
 - MUST communicate the real node ID of the introduction point `N(0)` to the sender
 - MUST communicate the first blinding ephemeral key `E(0)` to the sender
 
-The introduction point:
-
-- MUST compute:
-  - `ss(0) = SHA256(k(0) * E(0))` (standard ECDH)
-  - `rho(0) = HMAC256("rho", ss(0))`
-  - `E(1) = SHA256(E(0) || ss(0)) * E(0)`
-- MUST decrypt the `encrypted_data` field using `rho(0)` and use the
-  decrypted fields to locate the next node
-- If the `encrypted_data` field is missing or cannot be decrypted:
-  - MUST return an error
-- If `encrypted_data` contains a `next_blinding_override`:
-  - MUST use it as the next blinding point instead of `E(1)`
-- Otherwise:
-  - MUST use `E(1)` as the next blinding point
-- MUST forward the onion and include the next blinding point in the lightning
-  message for the next node
-
-An intermediate node in the blinded route:
+A reader:
 
 - MUST compute:
   - `ss(i) = SHA256(k(i) * E(i))` (standard ECDH)
   - `b(i) = HMAC256("blinded_node_id", ss(i)) * k(i)`
   - `rho(i) = HMAC256("rho", ss(i))`
   - `E(i+1) = SHA256(E(i) || ss(i)) * E(i)`
-- MUST use `b(i)` instead of its private key `k(i)` to decrypt the onion. Note
-  that the node may instead tweak the onion ephemeral key with
-  `HMAC256("blinded_node_id", ss(i))` which achieves the same result.
+- If it receives `E(i)` before decrypting the onion (e.g. in a lightning message):
+  - MUST use `b(i)` instead of its private key `k(i)` to decrypt the onion.
+    Note that the node may instead tweak the onion ephemeral key with
+    `HMAC256("blinded_node_id", ss(i))` which achieves the same result.
+- Otherwise:
+  - MUST use `k(i)` to decrypt the onion which must contain `E(i)`.
 - MUST decrypt the `encrypted_data` field using `rho(i)` and use the
   decrypted fields to locate the next node
 - If the `encrypted_data` field is missing or cannot be decrypted:
