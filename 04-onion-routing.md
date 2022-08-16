@@ -283,11 +283,11 @@ The creator of `encrypted_recipient_data` (usually, the recipient of payment):
 
   - MUST create `encrypted_data_tlv` for each node in the blinded route (including itself).
   - MUST include `encrypted_data_tlv.short_channel_id` and `encrypted_data_tlv.payment_relay` for each non-final node.
-  - SHOULD set `encrypted_data_tlv.payment_constraints` for each node in the blinded route (including itself):
+  - SHOULD set `encrypted_data_tlv.payment_constraints` and `encrypted_data_tlv.allowed_features` for each node in the blinded route (including itself):
     - `max_cltv_expiry` to the largest block height at which the route is allowed to be used, starting
     from the final node and adding `encrypted_data_tlv.payment_relay.cltv_expiry_delta` at each hop.
     - `htlc_minimum_msat` to the largest minimum HTLC value the nodes will allow.
-    - `allowed_features` to be empty.
+    - `allowed_features.features` to be empty.
   - MUST compute the total fees and cltv delta of the route as follows and communicate them to the sender:
     - `total_fee_base_msat(n+1) = (fee_base_msat(n+1) * 1000000 + total_fee_base_msat(n) * (1000000 + fee_proportional_millionths(n+1)) + 1000000 - 1) / 1000000`
     - `total_fee_proportional_millionths(n+1) = ((total_fee_proportional_millionths(n) + fee_proportional_millionths(n+1)) * 1000000 + total_fee_proportional_millionths(n) * fee_proportional_millionths(n+1) + 1000000 - 1) / 1000000`
@@ -336,10 +336,11 @@ The reader:
       - MUST return an error if:
         - the expiry is greater than `encrypted_recipient_data.payment_constraints.max_cltv_expiry`.
         - the amount is below `encrypted_recipient_data.payment_constraints.htlc_minimum_msat`.
-        - `encrypted_recipient_data.payment_constraints.allowed_features` contains an unknown feature bit (even if it is odd).
-        - the payment uses a feature not included in `encrypted_recipient_data.payment_constraints.allowed_features`.
+    - If `allowed_features` is present:
+      - MUST return an error if:
+        - `encrypted_recipient_data.allowed_features.features` contains an unknown feature bit (even if it is odd).
+        - the payment uses a feature not included in `encrypted_recipient_data.allowed_features.features`.
     - If it not the final node:
-      - MUST return `invalid_onion_blinding` for any local error (and forward normal downstream onion errors, which the final node may send).
       - MUST return an error if the payload contains other tlv fields than `encrypted_recipient_data` and `current_blinding_point`.
       - MUST return an error if `encrypted_recipient_data` does not contain either `short_channel_id` or `next_node_id`.
       - MUST return an error if `encrypted_recipient_data` does not contain `payment_relay`.
@@ -352,7 +353,6 @@ The reader:
       - MUST return an error if `amt_to_forward` is below what it expects for the payment.
   - Otherwise (it is not part of a blinded route):
     - MUST return an error if `amt_to_forward` or `outgoing_cltv_value` are not present.
-    - MUST return an `invalid_onion_blinding` error if `blinding_point` is set in the incoming `update_add_htlc`.
   - If it is the final node:
     - MUST treat `total_msat` as if it were equal to `amt_to_forward` if it is not present.
 
@@ -500,8 +500,10 @@ may contain the following TLV fields:
     1. type: 12 (`payment_constraints`)
     2. data:
         * [`u32`:`max_cltv_expiry`]
-        * [`u64`:`htlc_minimum_msat`]
-        * [`...*byte`:`allowed_features`]
+        * [`tu64`:`htlc_minimum_msat`]
+    1. type: 14 (`allowed_features`)
+    2. data:
+        * [`...*byte`:`features`]
 
 #### Requirements
 
@@ -528,17 +530,17 @@ A recipient N(r) creating a blinded route `N(0) -> N(1) -> ... -> N(r)` to itsel
 
 A reader:
 
+- If it receives `blinding_point` (`E(i)`) from the prior peer:
+  - MUST use `b(i)` instead of its private key `k(i)` to decrypt the onion.
+    Note that the node may instead tweak the onion ephemeral key with
+    `HMAC256("blinded_node_id", ss(i))` which achieves the same result.
+- Otherwise:
+  - MUST use `k(i)` to decrypt the onion, to extract `current_blinding_point` (`E(i)`).
 - MUST compute:
   - `ss(i) = SHA256(k(i) * E(i))` (standard ECDH)
   - `b(i) = HMAC256("blinded_node_id", ss(i)) * k(i)`
   - `rho(i) = HMAC256("rho", ss(i))`
   - `E(i+1) = SHA256(E(i) || ss(i)) * E(i)`
-- If it receives `E(i)` before decrypting the onion (e.g. in a lightning message):
-  - MUST use `b(i)` instead of its private key `k(i)` to decrypt the onion.
-    Note that the node may instead tweak the onion ephemeral key with
-    `HMAC256("blinded_node_id", ss(i))` which achieves the same result.
-- Otherwise:
-  - MUST use `k(i)` to decrypt the onion which must contain `E(i)`.
 - MUST decrypt the `encrypted_data` field using `rho(i)` and use the
   decrypted fields to locate the next node
 - If the `encrypted_data` field is missing or cannot be decrypted:
@@ -1058,12 +1060,26 @@ The association between the forward and return packets is handled outside of
 this onion routing protocol, e.g. via association with an HTLC in a payment
 channel.
 
+Error handling for HTLCs with `blinding_point` is particularly fraught,
+since differences in implementations (or versions) may be leveraged to
+de-anonymize elements of the blinded path. Thus the decision to allow
+only errors from the final node to propagate, and turn every other error
+into `invalid_onion_blinding` which will be converted to a normal onion
+error by the introduction point.
+
 ### Requirements
 
 The _erring node_:
   - SHOULD set `pad` such that the `failure_len` plus `pad_len` is equal to 256.
     - Note: this value is 118 bytes longer than the longest currently-defined
     message.
+  - If `blinding_point` is set in the incoming `update_add_htlc`:
+    - if it is not the final node (including if the `onion_routing_packet` is malformed):
+	    - SHOULD forward normal downstream `update_fail_htlc` errors (which the final node may send).
+      - MUST return `invalid_onion_blinding` for any local error or other downstream errors.
+    - otherwise (it is the final node):
+      - MAY return normal errors that help senders retry the payment (e.g. `mpp_timeout`).
+      - SHOULD return `invalid_onion_blinding` for all other errors.
 
 The _origin node_:
   - once the return message has been decrypted:
