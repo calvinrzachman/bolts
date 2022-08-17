@@ -283,11 +283,12 @@ The creator of `encrypted_recipient_data` (usually, the recipient of payment):
 
   - MUST create `encrypted_data_tlv` for each node in the blinded route (including itself).
   - MUST include `encrypted_data_tlv.short_channel_id` and `encrypted_data_tlv.payment_relay` for each non-final node.
-  - SHOULD set `encrypted_data_tlv.payment_constraints` and `encrypted_data_tlv.allowed_features` for each node in the blinded route (including itself):
+  - SHOULD set `encrypted_data_tlv.payment_constraints` for each node in the blinded route (including itself):
     - `max_cltv_expiry` to the largest block height at which the route is allowed to be used, starting
     from the final node and adding `encrypted_data_tlv.payment_relay.cltv_expiry_delta` at each hop.
     - `htlc_minimum_msat` to the largest minimum HTLC value the nodes will allow.
-    - `allowed_features.features` to be empty.
+  - If it sets `encrypted_data_tlv.allowed_features`:
+    - MUST set it to an empty array.
   - MUST compute the total fees and cltv delta of the route as follows and communicate them to the sender:
     - `total_fee_base_msat(n+1) = (fee_base_msat(n+1) * 1000000 + total_fee_base_msat(n) * (1000000 + fee_proportional_millionths(n+1)) + 1000000 - 1) / 1000000`
     - `total_fee_proportional_millionths(n+1) = ((total_fee_proportional_millionths(n) + fee_proportional_millionths(n+1)) * 1000000 + total_fee_proportional_millionths(n) * fee_proportional_millionths(n+1) + 1000000 - 1) / 1000000`
@@ -336,6 +337,8 @@ The reader:
       - MUST return an error if:
         - the expiry is greater than `encrypted_recipient_data.payment_constraints.max_cltv_expiry`.
         - the amount is below `encrypted_recipient_data.payment_constraints.htlc_minimum_msat`.
+    - If `allowed_features` is missing:
+      - MUST process the message as if it were present and contained an empty array.
     - If `allowed_features` is present:
       - MUST return an error if:
         - `encrypted_recipient_data.allowed_features.features` contains an unknown feature bit (even if it is odd).
